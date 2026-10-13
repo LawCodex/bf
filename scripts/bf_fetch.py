@@ -47,18 +47,42 @@ def listing():
 
 
 def parse_title(t):
-    m = re.search(r"(?:Loi|LOI)\s+(organique\s+|constitutionnelle\s+)?n\s*[°o]\s*([0-9]{2,4}\s*[-–]\s*[0-9]{4})\s*/?\s*([A-Z]+)?\s*du\s+(\d{1,2})(?:er)?\s+([a-zéû]+)\s+(\d{4})", t, re.I)
+    m = re.search(r"(?:Loi|LOI)\s+(organique\s+|constitutionnelle\s+)?n\s*[°o]\s*([0-9]{1,4}\s*[-–]\s*[0-9]{4})\s*/?\s*([A-Z]+)?(?:\s*du\s+(\d{1,2})(?:er)?\s+([a-zéû]+)\s+(\d{4}))?", t, re.I)
     if not m:
         return None, None, None
-    num = re.sub(r"\s", "", m.group(2)).replace("–", "-") + ("/" + m.group(3) if m.group(3) else "")
+    a, b = re.sub(r"\s", "", m.group(2)).replace("–", "-").split("-")
+    num = "%03d-%s" % (int(a), b) + ("/" + m.group(3).upper() if m.group(3) else "")
     d = None
-    if m.group(5).lower() in MONTHS:
+    if m.group(5) and m.group(5).lower() in MONTHS:
         d = "%s-%02d-%02d" % (m.group(6), MONTHS[m.group(5).lower()], int(m.group(4)))
     kind = (m.group(1) or "").strip().lower()
+    if not kind and re.search(r"r[ée]vision de la constitution", t, re.I):
+        kind = "constitutionnelle"
     return num, d, kind
 
 
+def _extract(path):
+    if T.pdf_ok(path):
+        tmp = os.path.join(RAW, "ocr", os.path.basename(path))
+        os.makedirs(tmp, exist_ok=True)
+        T.pdf_text(path, "fra", tmpdir=tmp)
+    return path
+
+
+def prewarm(n):
+    """Extract text (OCR) of all downloaded PDFs in parallel; cached next to the PDFs."""
+    from concurrent.futures import ProcessPoolExecutor
+    d = os.path.join(RAW, "pdf")
+    paths = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".pdf"))
+    with ProcessPoolExecutor(n) as ex:
+        for k, _ in enumerate(ex.map(_extract, paths)):
+            if k % 20 == 0:
+                print("extracted", k, "/", len(paths), flush=True)
+
+
 def main():
+    if "--jobs" in sys.argv:
+        prewarm(int(sys.argv[sys.argv.index("--jobs") + 1]))
     laws = listing()
     print("laws", len(laws), flush=True)
     used = {}
